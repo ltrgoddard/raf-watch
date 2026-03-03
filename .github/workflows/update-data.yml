@@ -1,0 +1,55 @@
+name: Update flight data
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Download existing data
+        run: |
+          gh release download latest-data --pattern 'data.zip' --dir .
+          unzip data.zip
+          rm data.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Fetch yesterday's data
+        run: uv run fetch.py --days 1 --keep-days 14
+
+      - name: Package and upload data
+        run: |
+          cd data
+          zip -r ../data.zip . -x 'cache/*' 'flights.bin'
+          cd ..
+          gh release upload latest-data data.zip --clobber
+          rm data.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
