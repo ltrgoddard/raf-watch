@@ -5,8 +5,8 @@
     --text-primary: #fff;
     --text-secondary: rgba(255, 255, 255, 0.9);
     --text-muted: rgba(255, 255, 255, 0.6);
-    --text-faint: rgba(255, 255, 255, 0.4);
-    --text-hint: rgba(255, 255, 255, 0.35);
+    --text-faint: rgba(255, 255, 255, 0.6);
+    --text-hint: rgba(255, 255, 255, 0.5);
     --accent: rgba(34, 211, 238, 0.9);
     --edge-spacing: 16px;
 
@@ -53,40 +53,28 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 }
 
 #panel h1 {
-    font-size: var(--font-base);
-    font-weight: 500;
-    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 6px;
     color: var(--text-primary);
     letter-spacing: 0;
     text-transform: none;
 }
 
-#info {
+#subtitle {
     font-size: var(--font-sm);
-    line-height: 1.6;
-    color: var(--text-muted);
-}
-
-.stat-count {
-    font-size: 24px;
-    font-weight: 400;
-    color: var(--text-primary);
-    display: block;
-    margin: 2px 0 4px;
-    font-variant-numeric: tabular-nums;
-}
-
-.stat-label {
-    font-size: var(--font-sm);
-    font-weight: 500;
+    line-height: 1.5;
     color: var(--text-faint);
+    margin: 0;
 }
 
-.date-label {
-    color: var(--text-hint);
-    font-size: var(--font-sm);
-    margin-bottom: 0;
-    display: block;
+#subtitle a {
+    color: var(--text-muted);
+    text-decoration: none;
+}
+
+#subtitle a:hover {
+    color: var(--text-primary);
 }
 
 
@@ -145,10 +133,10 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     bottom: var(--edge-spacing);
     left: 50%;
     transform: translateX(-50%);
+    width: calc(100% - 32px);
+    max-width: 700px;
     padding: 12px 20px 8px;
     z-index: 10;
-    min-width: 320px;
-    max-width: 500px;
     display: none;
 }
 
@@ -244,16 +232,6 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     margin-bottom: 4px;
 }
 
-.error-msg {
-    color: var(--text-muted);
-    line-height: 1.6;
-}
-
-.error-msg code {
-    color: var(--text-secondary);
-    font-size: var(--font-xs);
-}
-
 /* --- Scrollbar --- */
 
 #panel::-webkit-scrollbar { width: 4px; }
@@ -267,10 +245,9 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
         top: 8px;
         left: 8px;
         padding: 8px 12px;
-        max-width: 180px;
+        max-width: 220px;
     }
-    #panel h1 { font-size: var(--font-sm); }
-    .stat-count { font-size: 20px; }
+    #panel h1 { font-size: 16px; }
 
     #legend {
         bottom: auto;
@@ -281,8 +258,8 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     }
 
     #date-slider {
-        min-width: 200px;
-        max-width: calc(100vw - 32px);
+        width: calc(100% - 16px);
+        max-width: none;
         bottom: 8px;
     }
 }

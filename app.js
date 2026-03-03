@@ -178,29 +178,127 @@ function lastPositions(flights, meta) {
 
 // ── Map setup ───────────────────────────────────────────────────────
 
-const stylePromise = fetch('https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json')
-  .then(r => r.json())
-  .then(style => {
-    style.projection = { type: 'globe' };
-    style.sky = { 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] };
-    return style;
-  });
+const mapStyle = {
+  version: 8,
+  glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+  projection: { type: 'globe' },
+  sky: { 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] },
+  sources: {
+    carto: {
+      type: 'raster',
+      tiles: ['https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}@2x.png'],
+      tileSize: 256,
+      attribution: '&copy; <a href="https://carto.com">CARTO</a> &copy; <a href="https://openstreetmap.org">OSM</a>',
+    },
+    labels: {
+      type: 'vector',
+      url: 'https://tiles.openfreemap.org/planet',
+    },
+  },
+  layers: [
+    {
+      id: 'basemap', type: 'raster', source: 'carto',
+    },
+    {
+      id: 'country-borders', type: 'line', source: 'labels',
+      'source-layer': 'boundary',
+      filter: ['==', ['get', 'admin_level'], 2],
+      paint: {
+        'line-color': 'rgba(255, 255, 255, 0.15)',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 0.5, 6, 1.5],
+      },
+    },
+    {
+      id: 'country-labels', type: 'symbol', source: 'labels',
+      'source-layer': 'place',
+      filter: ['==', ['get', 'class'], 'country'],
+      minzoom: 2,
+      layout: {
+        'symbol-sort-key': ['get', 'rank'],
+        'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 2, 10, 6, 14],
+        'text-transform': 'uppercase',
+        'text-letter-spacing': 0.15,
+        'text-max-width': 8,
+      },
+      paint: {
+        'text-color': 'rgba(255, 255, 255, 0.85)',
+        'text-halo-color': 'rgba(0, 0, 0, 0.6)',
+        'text-halo-width': 1.5,
+      },
+    },
+    {
+      id: 'state-labels', type: 'symbol', source: 'labels',
+      'source-layer': 'place',
+      filter: ['==', ['get', 'class'], 'state'],
+      minzoom: 4,
+      layout: {
+        'symbol-sort-key': ['get', 'rank'],
+        'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 12],
+        'text-letter-spacing': 0.1,
+        'text-max-width': 8,
+      },
+      paint: {
+        'text-color': 'rgba(255, 255, 255, 0.6)',
+        'text-halo-color': 'rgba(0, 0, 0, 0.5)',
+        'text-halo-width': 1,
+      },
+    },
+    {
+      id: 'city-labels', type: 'symbol', source: 'labels',
+      'source-layer': 'place',
+      filter: ['in', ['get', 'class'], ['literal', ['city', 'town']]],
+      minzoom: 4,
+      layout: {
+        'symbol-sort-key': ['get', 'rank'],
+        'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 4, 10, 10, 14, 14, 18],
+        'text-max-width': 8,
+      },
+      paint: {
+        'text-color': 'rgba(255, 255, 255, 0.9)',
+        'text-halo-color': 'rgba(0, 0, 0, 0.6)',
+        'text-halo-width': 1.5,
+      },
+    },
+    {
+      id: 'village-labels', type: 'symbol', source: 'labels',
+      'source-layer': 'place',
+      filter: ['in', ['get', 'class'], ['literal', ['village', 'suburb', 'neighbourhood']]],
+      minzoom: 10,
+      layout: {
+        'symbol-sort-key': ['get', 'rank'],
+        'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 10, 10, 14, 14],
+        'text-max-width': 8,
+      },
+      paint: {
+        'text-color': 'rgba(255, 255, 255, 0.7)',
+        'text-halo-color': 'rgba(0, 0, 0, 0.5)',
+        'text-halo-width': 1,
+      },
+    },
+  ],
+};
 
 let map;
 
-stylePromise.then(style => {
-  map = new maplibregl.Map({
-    container: 'map',
-    style,
-    center: [-2.5, 54.5],
-    zoom: 4,
-    minZoom: 2,
-    attributionControl: false,
-  });
-
-  map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
-  initApp();
+map = new maplibregl.Map({
+  container: 'map',
+  style: mapStyle,
+  center: [-2.5, 54.5],
+  zoom: 4,
+  minZoom: 2,
+  attributionControl: false,
 });
+
+map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+initApp();
 
 // ── Tooltip ─────────────────────────────────────────────────────────
 
@@ -230,18 +328,7 @@ function hideTooltip() {
 
 // ── Info panel ──────────────────────────────────────────────────────
 
-function updatePanel(geojson, date) {
-  const info = document.getElementById('info');
-  const n = geojson.features.length;
-  const uniqueHex = new Set(geojson.features.map(f => f.properties.hex));
-
-  info.innerHTML = `
-    <span class="stat-label">Flight traces</span>
-    <span class="stat-count">${n}</span>
-    <span class="stat-label">${uniqueHex.size} aircraft</span>
-    <span class="date-label">${date}</span>
-  `;
-}
+function updatePanel() {}
 
 
 // ── Legend with filtering ────────────────────────────────────────────
@@ -360,8 +447,6 @@ const EMPTY_FC = { type: 'FeatureCollection', features: [] };
 
 function initApp() {
   map.on('load', async () => {
-    const info = document.getElementById('info');
-
     try {
       const [manifestResp, meta] = await Promise.all([
         fetch('data/manifest.json'),
@@ -379,6 +464,39 @@ function initApp() {
       map.addLayer({
         id: 'tracks-line', type: 'line', source: 'tracks',
         paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.7 },
+      });
+
+      // Chevron icon for direction
+      const sz = 16, cv = document.createElement('canvas');
+      cv.width = sz; cv.height = sz;
+      const cx = cv.getContext('2d');
+      cx.strokeStyle = '#fff';
+      cx.lineWidth = 2.5;
+      cx.lineCap = 'round';
+      cx.lineJoin = 'round';
+      cx.beginPath();
+      cx.moveTo(2, 12);
+      cx.lineTo(8, 6);
+      cx.lineTo(14, 12);
+      cx.stroke();
+      map.addImage('chevron', { width: sz, height: sz, data: cx.getImageData(0, 0, sz, sz).data }, { sdf: true });
+
+      map.addLayer({
+        id: 'tracks-arrows', type: 'symbol', source: 'tracks',
+        layout: {
+          'symbol-placement': 'line',
+          'symbol-spacing': 80,
+          'icon-image': 'chevron',
+          'icon-size': 1,
+          'icon-rotate': 90,
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+        },
+        paint: {
+          'icon-color': ['get', 'color'],
+          'icon-opacity': 0.5,
+        },
       });
 
       map.addSource('dots', { type: 'geojson', data: EMPTY_FC });
@@ -413,16 +531,15 @@ function initApp() {
             'case', ['==', ['get', 'hex'], props.hex], 2.5, 1,
           ]);
         });
+        map.on('click', layer, (e) => {
+          const props = e.features[0].properties;
+          const { lng, lat } = e.lngLat;
+          const zoom = map.getZoom().toFixed(1);
+          window.open(`https://globe.adsbexchange.com/?icao=${props.hex}&lat=${lat.toFixed(3)}&lon=${lng.toFixed(3)}&zoom=${zoom}&showTrace=${currentDate}&trackLabels`, '_blank');
+        });
       }
     } catch (err) {
-      info.innerHTML = `<div class="error-msg">
-        No flight data loaded.<br><br>
-        Run the fetch scripts first:<br>
-        <code>uv run scrape_hex.py</code><br>
-        <code>uv run fetch.py</code><br><br>
-        Then serve this directory:<br>
-        <code>python -m http.server</code>
-      </div>`;
+      console.error('Failed to load flight data:', err);
     }
   });
 }
