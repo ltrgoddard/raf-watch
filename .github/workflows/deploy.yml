@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Download data from latest release
         run: |
-          gh release download --pattern 'data.zip' --dir .
+          gh release download latest-data --pattern 'data.zip' --dir .
           unzip data.zip
           rm data.zip
         env:
