@@ -1,0 +1,32 @@
+RAF Watch
+
+Map of UK military aircraft flights using ADS-B data.
+
+Hex codes are scraped from live-mobile-mode-s.eu. Flight traces
+are fetched from globe.adsbexchange.com (tar1090 format) and
+stored as binary containers, parsed client-side. The frontend is
+static HTML/CSS/JS with MapLibre GL.
+
+Setup
+
+  uv run scrape_hex.py             Scrape hex codes
+  uv run fetch.py                  Fetch last 14 days of traces
+  uv run fetch.py --days 7         Fetch last 7 days
+  python -m http.server            Serve and open localhost:8000
+
+The fetch script caches results in data/cache/ and is resumable.
+Each day's data is stored as a separate .bin file loaded on demand
+by the date slider.
+
+Binary format (per-day .bin files)
+
+  [uint32 LE]  entry count
+  per entry:
+    [uint32 LE]  ICAO hex code as integer
+    [uint32 LE]  byte length of JSON payload
+    [N bytes]    raw JSON response from adsbexchange
+
+Data sources
+
+  Hex codes    https://live-mobile-mode-s.eu/overviewall.php?DGCountry=UK
+  Traces       https://globe.adsbexchange.com/globe_history/

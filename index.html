@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAF Watch</title>
+  <link href="https://unpkg.com/maplibre-gl@5.19.0/dist/maplibre-gl.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+</head>
+<body>
+  <div id="map"></div>
+  <div id="panel" class="panel glass">
+    <h1>RAF Watch</h1>
+    <div id="info">Loading&hellip;</div>
+  </div>
+  <div id="legend" class="panel glass">
+    <h4>Aircraft type</h4>
+    <div id="legend-items"></div>
+  </div>
+  <div id="date-slider" class="panel glass">
+    <input type="range" id="slider" min="0" max="0" value="0">
+    <div id="slider-labels"></div>
+  </div>
+  <div id="tooltip" class="glass"></div>
+  <script src="https://unpkg.com/maplibre-gl@5.19.0/dist/maplibre-gl.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
