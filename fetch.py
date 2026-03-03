@@ -45,6 +45,7 @@ def parse_args():
     p.add_argument("--from", dest="from_date", type=str, default=None)
     p.add_argument("--to", dest="to_date", type=str, default=None)
     p.add_argument("--rate", type=float, default=10.0, help="max requests/sec")
+    p.add_argument("--keep-days", type=int, default=0, help="prune .bin files older than N days (0=no pruning)")
     return p.parse_args()
 
 
@@ -169,7 +170,6 @@ async def main():
     print(f"Rate limit: {args.rate} req/s\n")
 
     rate_limiter = RateLimiter(args.rate)
-    available_dates: list[str] = []
 
     async with httpx.AsyncClient() as client:
         for d in dates:
@@ -178,17 +178,29 @@ async def main():
                 # Write per-day .bin file
                 day_bin = Path(f"data/{d}.bin")
                 build_binary(day_results, day_bin)
-                available_dates.append(str(d))
 
-    # Write manifest (sorted date list)
+    # Prune old .bin files if --keep-days is set
+    if args.keep_days > 0:
+        cutoff = date.today() - timedelta(days=args.keep_days)
+        for bin_file in sorted(Path("data").glob("????-??-??.bin")):
+            file_date = date.fromisoformat(bin_file.stem)
+            if file_date < cutoff:
+                print(f"  Pruning {bin_file.name}")
+                bin_file.unlink()
+
+    # Build manifest from all existing .bin files
+    available_dates = sorted(
+        f.stem for f in Path("data").glob("????-??-??.bin")
+    )
+
     manifest = Path("data/manifest.json")
-    manifest.write_text(json.dumps(sorted(available_dates)))
+    manifest.write_text(json.dumps(available_dates))
 
     # Write aircraft metadata
     meta_out = Path("data/aircraft_meta.json")
     meta_out.write_text(json.dumps(hex_lookup))
 
-    print(f"\nDone: {len(available_dates)} days with data → data/*.bin + manifest.json")
+    print(f"\nDone: {len(available_dates)} days with data -> data/*.bin + manifest.json")
 
 
 asyncio.run(main())
