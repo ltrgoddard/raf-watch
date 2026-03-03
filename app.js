@@ -326,11 +326,6 @@ function hideTooltip() {
 }
 
 
-// ── Info panel ──────────────────────────────────────────────────────
-
-function updatePanel() {}
-
-
 // ── Legend with filtering ────────────────────────────────────────────
 
 const hiddenTypes = new Set();
@@ -349,7 +344,6 @@ function updateMapData() {
   const dots = lastPositions(filtered, currentMeta);
   map.getSource('tracks').setData(tracks);
   map.getSource('dots').setData(dots);
-  updatePanel(tracks, currentDate);
 }
 
 function buildLegend() {

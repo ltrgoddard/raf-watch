@@ -1,6 +1,6 @@
-RAF Watch
+RAFWATCH
 
-Map of UK military aircraft flights using ADS-B data.
+Interactive map of UK Royal Air Force activity using ADS-B data.
 
 Hex codes are scraped from live-mobile-mode-s.eu. Flight traces
 are fetched from globe.adsbexchange.com (tar1090 format) and
