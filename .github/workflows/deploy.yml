@@ -25,14 +25,14 @@ jobs:
       - name: Download data from latest release
         run: |
           gh release download latest-data --pattern 'data.zip' --dir .
-          mkdir -p data
-          unzip data.zip -d data
+          mkdir -p web/data
+          unzip data.zip -d web/data
           rm data.zip
         env:
           GH_TOKEN: ${{ github.token }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: web
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -36,7 +36,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Fetch yesterday's data
-        run: uv run fetch.py --days 1 --keep-days 14
+        run: uv run scripts/fetch_adsb.py --days 1 --keep-days 14
 
       - name: Package and upload data
         run: |
@@ -48,9 +48,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Copy data into web directory
+        run: cp -r data web/data
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: web
       - id: deployment
         uses: actions/deploy-pages@v4
