@@ -29,7 +29,8 @@ jobs:
       - name: Download existing data
         run: |
           gh release download latest-data --pattern 'data.zip' --dir .
-          unzip data.zip
+          mkdir -p data
+          unzip data.zip -d data
           rm data.zip
         env:
           GH_TOKEN: ${{ github.token }}
