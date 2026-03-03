@@ -9,9 +9,9 @@ Caches per-day results so it can resume across runs. Outputs per-day .bin
 files and a manifest.json for the frontend.
 
 Usage:
-  uv run fetch.py               # fetch last 14 days
-  uv run fetch.py --days 7      # fetch last 7 days
-  uv run fetch.py --from 2026-02-20 --to 2026-03-02
+  uv run scripts/fetch_adsb.py               # fetch last 14 days
+  uv run scripts/fetch_adsb.py --days 7      # fetch last 7 days
+  uv run scripts/fetch_adsb.py --from 2026-02-20 --to 2026-03-02
 """
 
 import sys
@@ -151,7 +151,7 @@ async def main():
 
     aircraft_file = Path("data/aircraft.json")
     if not aircraft_file.exists():
-        print("Run scrape_hex.py first")
+        print("Run scripts/scrape_hex.py first")
         sys.exit(1)
 
     aircraft = json.loads(aircraft_file.read_text())
