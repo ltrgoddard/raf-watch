@@ -503,9 +503,56 @@ function initApp() {
         paint: { 'circle-radius': 3, 'circle-color': ['get', 'color'], 'circle-opacity': 0.9 },
       });
 
+      // RAF bases
+      const basesFC = {
+        type: 'FeatureCollection',
+        features: RAF_BASES.map(b => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: b.coords },
+          properties: { name: b.name, icao: b.icao || '' },
+        })),
+      };
+      map.addSource('bases', { type: 'geojson', data: basesFC });
+      map.addLayer({
+        id: 'bases', type: 'circle', source: 'bases',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5],
+          'circle-color': 'transparent',
+          'circle-stroke-color': 'rgba(255, 255, 255, 0.5)',
+          'circle-stroke-width': 1.5,
+        },
+      });
+      map.addLayer({
+        id: 'bases-labels', type: 'symbol', source: 'bases',
+        minzoom: 6,
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 10,
+          'text-offset': [0, 1.2],
+          'text-anchor': 'top',
+        },
+        paint: {
+          'text-color': 'rgba(255, 255, 255, 0.6)',
+          'text-halo-color': 'rgba(0, 0, 0, 0.6)',
+          'text-halo-width': 1,
+        },
+      });
+
       buildLegend();
       const showDate = setupDateSlider(dates, meta);
       await showDate();
+
+      // Base hover
+      map.on('mouseenter', 'bases', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'bases', () => { map.getCanvas().style.cursor = ''; hideTooltip(); });
+      map.on('mousemove', 'bases', (e) => {
+        const p = e.features[0].properties;
+        tooltip.innerHTML = `<div class="tt-hex">${p.name}</div>${p.icao ? `<div class="tt-label">ICAO</div><div class="tt-value">${p.icao}</div>` : ''}`;
+        tooltip.style.display = 'block';
+        tooltip.style.left = e.point.x + 16 + 'px';
+        tooltip.style.top = e.point.y + 'px';
+      });
 
       for (const layer of ['tracks-line', 'dots']) {
         map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });

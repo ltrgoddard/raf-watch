@@ -12,6 +12,7 @@ Setup
   uv run scrape_hex.py             Scrape hex codes
   uv run fetch.py                  Fetch last 14 days of traces
   uv run fetch.py --days 7         Fetch last 7 days
+  uv run fetch_bases.py            Fetch RAF base locations from OSM
   python -m http.server            Serve and open localhost:8000
 
 The fetch script caches results in data/cache/ and is resumable.
@@ -30,3 +31,4 @@ Data sources
 
   Hex codes    https://live-mobile-mode-s.eu/overviewall.php?DGCountry=UK
   Traces       https://globe.adsbexchange.com/globe_history/
+  Bases        OpenStreetMap via Overpass API (military=airfield)
