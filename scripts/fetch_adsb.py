@@ -188,13 +188,15 @@ async def main():
                 print(f"  Pruning {bin_file.name}")
                 bin_file.unlink()
 
-    # Build manifest from all existing .bin files
-    available_dates = sorted(
-        f.stem for f in Path("data").glob("????-??-??.bin")
-    )
+    # Build manifest from all existing .bin files (with flight counts)
+    manifest_data = {}
+    for f in sorted(Path("data").glob("????-??-??.bin")):
+        with open(f, "rb") as bf:
+            count = struct.unpack("<I", bf.read(4))[0]
+        manifest_data[f.stem] = count
 
     manifest = Path("data/manifest.json")
-    manifest.write_text(json.dumps(available_dates))
+    manifest.write_text(json.dumps(manifest_data))
 
     # Write aircraft metadata
     meta_out = Path("data/aircraft_meta.json")

@@ -425,18 +425,7 @@ function updateLegendCounts() {
 
 // ── Date slider with lazy loading ───────────────────────────────────
 
-async function fetchFlightCounts(dates) {
-  const counts = await Promise.all(dates.map(async (date) => {
-    try {
-      const resp = await fetch(`data/${date}.bin`, { method: 'GET', headers: { Range: 'bytes=0-3' } });
-      const buf = await resp.arrayBuffer();
-      return new DataView(buf).getUint32(0, true);
-    } catch { return 0; }
-  }));
-  return counts;
-}
-
-function setupDateSlider(dates, meta) {
+function setupDateSlider(dates, meta, flightCounts) {
   const slider = document.getElementById('slider');
   const labels = document.getElementById('slider-labels');
   const container = document.getElementById('date-slider');
@@ -468,20 +457,17 @@ function setupDateSlider(dates, meta) {
     }
   }
 
-  let flightCounts = [];
-
-  // Fetch counts and set bar heights
-  fetchFlightCounts(dates).then(counts => {
-    flightCounts = counts;
-    const max = Math.max(...counts, 1);
+  // Set histogram bar heights from manifest counts
+  if (flightCounts.length) {
+    const max = Math.max(...flightCounts, 1);
     const bars = histogram.querySelectorAll('.histo-bar');
     bars.forEach((bar, i) => {
-      const pct = Math.max((counts[i] / max) * 100, 4); // min 4% so zero-days still show
+      const pct = Math.max((flightCounts[i] / max) * 100, 4);
       bar.style.height = `${pct}%`;
     });
-    updateHistogramActive();
-    updateLabel(dates[parseInt(slider.value)]);
-  });
+  }
+  updateHistogramActive();
+  updateLabel(dates[parseInt(slider.value)]);
 
   let loading = false;
 
@@ -542,7 +528,9 @@ function initApp() {
       ]);
 
       if (!manifestResp.ok) throw new Error('No manifest');
-      const dates = await manifestResp.json();
+      const manifest = await manifestResp.json();
+      const dates = Array.isArray(manifest) ? manifest : Object.keys(manifest).sort();
+      const flightCounts = Array.isArray(manifest) ? [] : dates.map(d => manifest[d]);
 
       map.addSource('tracks', { type: 'geojson', data: EMPTY_FC });
       map.addLayer({
@@ -646,7 +634,7 @@ function initApp() {
       });
 
       buildLegend();
-      const showDate = setupDateSlider(dates, meta);
+      const showDate = setupDateSlider(dates, meta, flightCounts);
       await showDate();
 
       // Base hover

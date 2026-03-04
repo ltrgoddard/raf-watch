@@ -9,15 +9,16 @@ static HTML/CSS/JS with MapLibre GL.
 
 Setup
 
-  uv run scrape_hex.py             Scrape hex codes
-  uv run fetch.py                  Fetch last 14 days of traces
-  uv run fetch.py --days 7         Fetch last 7 days
-  uv run fetch_bases.py            Fetch RAF base locations from OSM
-  python -m http.server            Serve and open localhost:8000
+  uv run scripts/scrape_hex.py             Scrape hex codes
+  uv run scripts/fetch_adsb.py             Fetch last 14 days of traces
+  uv run scripts/fetch_adsb.py --days 7    Fetch last 7 days
+  uv run scripts/fetch_bases.py            Fetch RAF base locations from OSM
+  python -m http.server -d web             Serve and open localhost:8000
 
 The fetch script caches results in data/cache/ and is resumable.
 Each day's data is stored as a separate .bin file loaded on demand
-by the date slider.
+by the date slider. Flight counts per day are included in the
+manifest (data/manifest.json).
 
 Binary format (per-day .bin files)
 
@@ -26,6 +27,12 @@ Binary format (per-day .bin files)
     [uint32 LE]  ICAO hex code as integer
     [uint32 LE]  byte length of JSON payload
     [N bytes]    raw JSON response from adsbexchange
+
+Manifest format (data/manifest.json)
+
+  {"2026-02-18": 138, "2026-02-19": 121, ...}
+
+  Keys are dates with .bin files, values are flight counts.
 
 Data sources
 
