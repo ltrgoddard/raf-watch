@@ -404,7 +404,7 @@ function setupDateSlider(dates, meta) {
   const ticks = document.getElementById('slider-ticks');
   ticks.innerHTML = dates.map((_, i) => {
     const pct = dates.length > 1 ? (i / (dates.length - 1)) * 100 : 50;
-    return `<span class="tick" style="left:${pct}%"></span>`;
+    return `<span class="tick" style="left:calc(5px + ${pct} * (100% - 10px) / 100)"></span>`;
   }).join('');
 
   let loading = false;
