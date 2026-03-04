@@ -88,6 +88,9 @@ async function loadDay(date) {
 
 // ── Build GeoJSON from trace data ───────────────────────────────────
 
+// Max seconds between consecutive ADS-B reports before we consider it a gap
+const GAP_THRESHOLD = 180;
+
 function traceToGeoJSON(flights, meta) {
   const features = [];
 
@@ -97,45 +100,78 @@ function traceToGeoJSON(flights, meta) {
 
     const hex = flight._hexStr || flight.icao;
     const m = meta[hex] || {};
-    const coords = [];
     let maxAlt = 0;
     let totalSpeed = 0;
     let pointCount = 0;
 
+    // Collect valid points with their timestamps
+    const points = [];
     for (const pt of trace) {
       const lat = pt[T.LAT];
       const lon = pt[T.LON];
       const alt = pt[T.ALT] || 0;
       if (lat == null || lon == null) continue;
-      coords.push([lon, lat]);
+      points.push({ lon, lat, time: pt[T.TIME], speed: pt[T.SPEED] || 0, alt });
       if (alt > maxAlt) maxAlt = alt;
       totalSpeed += pt[T.SPEED] || 0;
       pointCount++;
     }
 
-    if (coords.length < 2) continue;
+    if (points.length < 2) continue;
 
     const flightDate = flight.timestamp
       ? new Date(flight.timestamp * 1000).toISOString().slice(0, 10)
       : '';
 
-    features.push({
-      type: 'Feature',
-      geometry: { type: 'LineString', coordinates: coords },
-      properties: {
-        hex,
-        reg: m.reg || flight.r || '',
-        type: m.type || flight.desc || '',
-        icao_type: m.icao_type || flight.t || '',
-        unit: m.unit || '',
-        date: flightDate,
-        maxAlt,
-        avgSpeed: pointCount ? Math.round(totalSpeed / pointCount) : 0,
-        points: pointCount,
-        color: typeColor(m.icao_type || flight.t || ''),
-        typeGroup: classifyType(m.icao_type || flight.t || ''),
-      },
-    });
+    const baseProps = {
+      hex,
+      reg: m.reg || flight.r || '',
+      type: m.type || flight.desc || '',
+      icao_type: m.icao_type || flight.t || '',
+      unit: m.unit || '',
+      date: flightDate,
+      maxAlt,
+      avgSpeed: pointCount ? Math.round(totalSpeed / pointCount) : 0,
+      points: pointCount,
+      color: typeColor(m.icao_type || flight.t || ''),
+      typeGroup: classifyType(m.icao_type || flight.t || ''),
+    };
+
+    // Split into solid and gap segments based on time between points
+    let segment = [points[0]];
+    for (let i = 1; i < points.length; i++) {
+      const dt = points[i].time - points[i - 1].time;
+      if (dt > GAP_THRESHOLD) {
+        // Emit the solid segment so far
+        if (segment.length >= 2) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: segment.map(p => [p.lon, p.lat]) },
+            properties: { ...baseProps, gap: false },
+          });
+        }
+        // Emit a gap segment connecting the two points
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: [
+            [segment[segment.length - 1].lon, segment[segment.length - 1].lat],
+            [points[i].lon, points[i].lat],
+          ]},
+          properties: { ...baseProps, gap: true },
+        });
+        segment = [points[i]];
+      } else {
+        segment.push(points[i]);
+      }
+    }
+    // Emit final solid segment
+    if (segment.length >= 2) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: segment.map(p => [p.lon, p.lat]) },
+        properties: { ...baseProps, gap: false },
+      });
+    }
   }
 
   return { type: 'FeatureCollection', features };
@@ -459,11 +495,18 @@ function initApp() {
       map.addSource('tracks', { type: 'geojson', data: EMPTY_FC });
       map.addLayer({
         id: 'tracks-glow', type: 'line', source: 'tracks',
+        filter: ['!=', ['get', 'gap'], true],
         paint: { 'line-color': ['get', 'color'], 'line-width': 4, 'line-opacity': 0.15, 'line-blur': 4 },
       });
       map.addLayer({
         id: 'tracks-line', type: 'line', source: 'tracks',
+        filter: ['!=', ['get', 'gap'], true],
         paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.7 },
+      });
+      map.addLayer({
+        id: 'tracks-gap', type: 'line', source: 'tracks',
+        filter: ['==', ['get', 'gap'], true],
+        paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.35, 'line-dasharray': [2, 4] },
       });
 
       // Chevron icon for direction
@@ -560,13 +603,14 @@ function initApp() {
         tooltip.style.top = e.point.y + 'px';
       });
 
-      for (const layer of ['tracks-line', 'dots']) {
+      for (const layer of ['tracks-line', 'tracks-gap', 'dots']) {
         map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', layer, () => {
           map.getCanvas().style.cursor = '';
           hideTooltip();
           map.setPaintProperty('tracks-line', 'line-opacity', 0.7);
           map.setPaintProperty('tracks-line', 'line-width', 1.5);
+          map.setPaintProperty('tracks-gap', 'line-opacity', 0.35);
         });
         map.on('mousemove', layer, (e) => {
           const props = e.features[0].properties;
@@ -576,6 +620,9 @@ function initApp() {
           ]);
           map.setPaintProperty('tracks-line', 'line-width', [
             'case', ['==', ['get', 'hex'], props.hex], 2.5, 1,
+          ]);
+          map.setPaintProperty('tracks-gap', 'line-opacity', [
+            'case', ['==', ['get', 'hex'], props.hex], 0.6, 0.15,
           ]);
         });
         map.on('click', layer, (e) => {
