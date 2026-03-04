@@ -508,6 +508,11 @@ function initApp() {
         filter: ['==', ['get', 'gap'], true],
         paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.35, 'line-dasharray': [2, 4] },
       });
+      // Wide invisible layer for easier mouse/touch interaction
+      map.addLayer({
+        id: 'tracks-hit', type: 'line', source: 'tracks',
+        paint: { 'line-color': '#000', 'line-width': 14, 'line-opacity': 0.01 },
+      });
 
       // Chevron icon for direction
       const sz = 16, cv = document.createElement('canvas');
@@ -603,7 +608,7 @@ function initApp() {
         tooltip.style.top = e.point.y + 'px';
       });
 
-      for (const layer of ['tracks-line', 'tracks-gap', 'dots']) {
+      for (const layer of ['tracks-hit', 'dots']) {
         map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', layer, () => {
           map.getCanvas().style.cursor = '';
