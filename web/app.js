@@ -401,6 +401,12 @@ function setupDateSlider(dates, meta) {
   slider.value = dates.length - 1; // default to latest
   container.classList.add('active');
 
+  const ticks = document.getElementById('slider-ticks');
+  ticks.innerHTML = dates.map((_, i) => {
+    const pct = dates.length > 1 ? (i / (dates.length - 1)) * 100 : 50;
+    return `<span class="tick" style="left:${pct}%"></span>`;
+  }).join('');
+
   let loading = false;
 
   function updateLabel(date) {

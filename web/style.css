@@ -161,6 +161,27 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 
 #date-slider.active { display: block; }
 
+#slider-track {
+    position: relative;
+}
+
+#slider-ticks {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 0;
+    pointer-events: none;
+}
+
+.tick {
+    position: absolute;
+    width: 1px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.25);
+    transform: translate(-50%, -50%);
+}
+
 #slider {
     width: 100%;
     -webkit-appearance: none;
