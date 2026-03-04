@@ -218,7 +218,7 @@ const mapStyle = {
   version: 8,
   glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
   projection: { type: 'globe' },
-  sky: { 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] },
+  sky: { 'atmosphere-blend': 0 },
   sources: {
     carto: {
       type: 'raster',
