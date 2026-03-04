@@ -425,10 +425,22 @@ function updateLegendCounts() {
 
 // ── Date slider with lazy loading ───────────────────────────────────
 
+async function fetchFlightCounts(dates) {
+  const counts = await Promise.all(dates.map(async (date) => {
+    try {
+      const resp = await fetch(`data/${date}.bin`, { method: 'GET', headers: { Range: 'bytes=0-3' } });
+      const buf = await resp.arrayBuffer();
+      return new DataView(buf).getUint32(0, true);
+    } catch { return 0; }
+  }));
+  return counts;
+}
+
 function setupDateSlider(dates, meta) {
   const slider = document.getElementById('slider');
   const labels = document.getElementById('slider-labels');
   const container = document.getElementById('date-slider');
+  const histogram = document.getElementById('slider-histogram');
 
   if (dates.length === 0) return;
 
@@ -443,12 +455,43 @@ function setupDateSlider(dates, meta) {
     return `<span class="tick" style="left:calc(5px + ${pct} * (100% - 10px) / 100)"></span>`;
   }).join('');
 
+  // Build histogram bars positioned to match tick marks
+  histogram.innerHTML = dates.map((_, i) => {
+    const pct = dates.length > 1 ? (i / (dates.length - 1)) * 100 : 50;
+    return `<div class="histo-bar" data-idx="${i}" style="left:calc(5px + ${pct} * (100% - 10px) / 100)"></div>`;
+  }).join('');
+
+  function updateHistogramActive() {
+    const idx = parseInt(slider.value);
+    for (const bar of histogram.querySelectorAll('.histo-bar')) {
+      bar.classList.toggle('active', parseInt(bar.dataset.idx) === idx);
+    }
+  }
+
+  let flightCounts = [];
+
+  // Fetch counts and set bar heights
+  fetchFlightCounts(dates).then(counts => {
+    flightCounts = counts;
+    const max = Math.max(...counts, 1);
+    const bars = histogram.querySelectorAll('.histo-bar');
+    bars.forEach((bar, i) => {
+      const pct = Math.max((counts[i] / max) * 100, 4); // min 4% so zero-days still show
+      bar.style.height = `${pct}%`;
+    });
+    updateHistogramActive();
+    updateLabel(dates[parseInt(slider.value)]);
+  });
+
   let loading = false;
 
   function updateLabel(date) {
+    const idx = dates.indexOf(date);
+    const count = flightCounts[idx];
+    const current = count !== undefined ? `${date} · ${count} flights` : date;
     labels.innerHTML = `
       <span>${dates[0]}</span>
-      <span class="current">${date}</span>
+      <span class="current">${current}</span>
       <span>${dates[dates.length - 1]}</span>
     `;
   }
@@ -460,6 +503,7 @@ function setupDateSlider(dates, meta) {
 
     loading = true;
     updateLabel(date);
+    updateHistogramActive();
 
     currentFlights = await loadDay(date);
     currentMeta = meta;
@@ -471,6 +515,14 @@ function setupDateSlider(dates, meta) {
   }
 
   slider.addEventListener('input', showDate);
+
+  // Click on histogram bar jumps slider to that date
+  histogram.addEventListener('click', (e) => {
+    const bar = e.target.closest('.histo-bar');
+    if (!bar) return;
+    slider.value = bar.dataset.idx;
+    showDate();
+  });
 
   // return loader for initial date
   return showDate;

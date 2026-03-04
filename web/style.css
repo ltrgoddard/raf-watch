@@ -100,8 +100,8 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 /* --- Legend --- */
 
 #legend {
-    bottom: var(--edge-spacing);
-    left: var(--edge-spacing);
+    top: var(--edge-spacing);
+    right: var(--edge-spacing);
     padding: 12px 14px;
     z-index: 10;
     display: none;
@@ -109,7 +109,7 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 
 #legend.active { display: block; }
 
-#legend h4 {
+.panel h4 {
     font-size: var(--font-sm);
     font-weight: 500;
     color: var(--text-faint);
@@ -150,16 +150,47 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 #date-slider {
     position: absolute;
     bottom: var(--edge-spacing);
-    left: 50%;
-    transform: translateX(-50%);
-    width: calc(100% - 32px);
-    max-width: 700px;
+    left: var(--edge-spacing);
+    width: 420px;
+    max-width: calc(100% - 32px);
     padding: 12px 20px 8px;
     z-index: 10;
     display: none;
 }
 
 #date-slider.active { display: block; }
+
+#slider-histogram {
+    position: relative;
+    height: 24px;
+    margin-bottom: 4px;
+}
+
+#slider-histogram .histo-bar {
+    position: absolute;
+    bottom: 0;
+    width: 3px;
+    background: rgba(255, 255, 255, 0.35);
+    min-height: 1px;
+    border-radius: 1px 1px 0 0;
+    transform: translateX(-50%);
+    transition: background 0.15s;
+    cursor: pointer;
+}
+
+#slider-histogram .histo-bar::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 16px;
+    height: calc(100% + 4px);
+}
+
+#slider-histogram .histo-bar.active {
+    background: rgba(255, 255, 255, 0.6);
+}
 
 #slider-track {
     position: relative;
@@ -290,16 +321,15 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     #panel h1 { font-size: 16px; }
 
     #legend {
-        bottom: auto;
         top: 8px;
         right: 8px;
-        left: auto;
         padding: 8px 10px;
     }
 
     #date-slider {
-        width: calc(100% - 16px);
-        max-width: none;
         bottom: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: calc(100% - 16px);
     }
 }
