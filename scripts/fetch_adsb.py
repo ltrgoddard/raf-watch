@@ -202,7 +202,7 @@ async def main():
     meta_out = Path("data/aircraft_meta.json")
     meta_out.write_text(json.dumps(hex_lookup))
 
-    print(f"\nDone: {len(available_dates)} days with data -> data/*.bin + manifest.json")
+    print(f"\nDone: {len(manifest_data)} days with data -> data/*.bin + manifest.json")
 
 
 asyncio.run(main())
