@@ -534,8 +534,144 @@ function setupDateSlider(dates, meta, flightCounts) {
 }
 
 
+// ── Shipments mode ──────────────────────────────────────────────────
+
+const PRODUCT_COLORS = {
+  'JP-5':  '#e05555',
+  'JP-8':  '#cc9944',
+  'JP-1':  '#55aabb',
+  'F-76':  '#5588cc',
+  'Jet A-1': '#9977bb',
+  'Other': '#778899',
+};
+
+const PRODUCT_ORDER = ['JP-5', 'JP-8', 'JP-1', 'F-76', 'Jet A-1', 'Other'];
+
+function shipmentProductColor(product) {
+  return PRODUCT_COLORS[product] || PRODUCT_COLORS['Other'];
+}
+
+function shipmentProductGroup(product) {
+  return PRODUCT_COLORS[product] ? product : 'Other';
+}
+
+function parseShipmentsBin(buf) {
+  const view = new DataView(buf);
+  const count = view.getUint32(0, true);
+  let offset = 4;
+  const shipments = [];
+
+  for (let i = 0; i < count; i++) {
+    const imo = view.getUint32(offset, true);
+    const len = view.getUint32(offset + 4, true);
+    offset += 8;
+    const bytes = new Uint8Array(buf, offset, len);
+    const text = new TextDecoder().decode(bytes);
+    const data = JSON.parse(text);
+    data._imo = imo;
+    shipments.push(data);
+    offset += len;
+  }
+
+  return shipments;
+}
+
+let shipmentsCache = null;
+const hiddenProducts = new Set();
+
+async function loadShipments() {
+  if (shipmentsCache) return shipmentsCache;
+  const resp = await fetch('data/shipments.bin');
+  if (!resp.ok) return [];
+  shipmentsCache = parseShipmentsBin(await resp.arrayBuffer());
+  return shipmentsCache;
+}
+
+function shipmentsToGeoJSON(shipments) {
+  const features = [];
+
+  for (const s of shipments) {
+    const group = shipmentProductGroup(s.product);
+    if (hiddenProducts.has(group)) continue;
+    const color = shipmentProductColor(s.product);
+
+    const props = {
+      id: s.id,
+      vessel: s.vessel || `IMO ${s._imo}`,
+      product: s.product,
+      status: s.status,
+      start: s.start,
+      end: s.end,
+      origin: s.origin ? s.origin[2] : '',
+      originCountry: s.origin ? s.origin[3] : '',
+      dest: s.dest ? s.dest[2] : '',
+      destCountry: s.dest ? s.dest[3] : '',
+      mass: s.mass,
+      vol: s.vol,
+      buyer: s.buyer || '',
+      seller: s.seller || '',
+      color,
+      group,
+    };
+
+    // Vessel AIS trace
+    if (s.trace && s.trace.length >= 2) {
+      const coords = s.trace.map(pt => [pt[2], pt[1]]); // [lon, lat]
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: coords },
+        properties: { ...props, layer: 'trace' },
+      });
+    }
+
+    // Origin → Destination arc (when no trace or as fallback)
+    if (s.origin && s.dest) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.origin[0], s.origin[1]] },
+        properties: { ...props, layer: 'port', portType: 'origin', portName: s.origin[2] },
+      });
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.dest[0], s.dest[1]] },
+        properties: { ...props, layer: 'port', portType: 'dest', portName: s.dest[2] },
+      });
+    }
+  }
+
+  return { type: 'FeatureCollection', features };
+}
+
+function shipmentPorts(shipments) {
+  const features = [];
+  for (const s of shipments) {
+    const group = shipmentProductGroup(s.product);
+    if (hiddenProducts.has(group)) continue;
+    const color = shipmentProductColor(s.product);
+    const props = { vessel: s.vessel, product: s.product, color, group };
+
+    if (s.origin) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.origin[0], s.origin[1]] },
+        properties: { ...props, portType: 'origin', portName: s.origin[2], country: s.origin[3] },
+      });
+    }
+    if (s.dest) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.dest[0], s.dest[1]] },
+        properties: { ...props, portType: 'dest', portName: s.dest[2], country: s.dest[3] },
+      });
+    }
+  }
+  return { type: 'FeatureCollection', features };
+}
+
+
 // ── Main ────────────────────────────────────────────────────────────
 
+let currentMode = 'flights';
 const EMPTY_FC = { type: 'FeatureCollection', features: [] };
 
 function initApp() {
@@ -652,15 +788,182 @@ function initApp() {
         },
       });
 
+      // ── Shipment layers ──
+      map.addSource('ship-tracks', { type: 'geojson', data: EMPTY_FC });
+      map.addLayer({
+        id: 'ship-tracks-glow', type: 'line', source: 'ship-tracks',
+        paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0.15, 'line-blur': 3 },
+      });
+      map.addLayer({
+        id: 'ship-tracks-line', type: 'line', source: 'ship-tracks',
+        paint: { 'line-color': ['get', 'color'], 'line-width': 1.2, 'line-opacity': 0.6 },
+      });
+      map.addLayer({
+        id: 'ship-tracks-hit', type: 'line', source: 'ship-tracks',
+        paint: { 'line-color': '#000', 'line-width': 14, 'line-opacity': 0.01 },
+      });
+
+      map.addSource('ship-ports', { type: 'geojson', data: EMPTY_FC });
+      map.addLayer({
+        id: 'ship-ports-glow', type: 'circle', source: 'ship-ports',
+        paint: { 'circle-radius': 5, 'circle-color': ['get', 'color'], 'circle-opacity': 0.2, 'circle-blur': 1 },
+      });
+      map.addLayer({
+        id: 'ship-ports', type: 'circle', source: 'ship-ports',
+        paint: {
+          'circle-radius': ['case', ['==', ['get', 'portType'], 'dest'], 3.5, 2.5],
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.8,
+        },
+      });
+
+      setShipmentLayersVisible(false);
+
+      // ── Mode switching ──
+      function setFlightLayersVisible(v) {
+        const vis = v ? 'visible' : 'none';
+        for (const id of ['tracks-glow','tracks-line','tracks-gap','tracks-hit','tracks-arrows','dots-glow','dots','bases','bases-labels']) {
+          map.setLayoutProperty(id, 'visibility', vis);
+        }
+      }
+      function setShipmentLayersVisible(v) {
+        const vis = v ? 'visible' : 'none';
+        for (const id of ['ship-tracks-glow','ship-tracks-line','ship-tracks-hit','ship-ports-glow','ship-ports']) {
+          map.setLayoutProperty(id, 'visibility', vis);
+        }
+      }
+
+      async function switchMode(mode) {
+        currentMode = mode;
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+
+        if (mode === 'flights') {
+          setShipmentLayersVisible(false);
+          setFlightLayersVisible(true);
+          document.getElementById('date-slider').classList.add('active');
+          document.getElementById('legend').querySelector('h4').textContent = 'Aircraft type';
+          updateLegendCounts();
+          updateMapData();
+        } else {
+          setFlightLayersVisible(false);
+          setShipmentLayersVisible(true);
+          document.getElementById('date-slider').classList.remove('active');
+
+          const shipments = await loadShipments();
+          const traces = shipmentsToGeoJSON(shipments);
+          const traceLines = { type: 'FeatureCollection', features: traces.features.filter(f => f.geometry.type === 'LineString') };
+          const ports = shipmentPorts(shipments);
+          map.getSource('ship-tracks').setData(traceLines);
+          map.getSource('ship-ports').setData(ports);
+
+          updateShipmentLegend(shipments);
+        }
+      }
+
+      function updateShipmentLegend(shipments) {
+        const el = document.getElementById('legend-items');
+        const legend = document.getElementById('legend');
+        legend.querySelector('h4').textContent = 'Fuel type';
+
+        const counts = {};
+        for (const s of shipments) {
+          const g = shipmentProductGroup(s.product);
+          counts[g] = (counts[g] || 0) + 1;
+        }
+
+        el.innerHTML = PRODUCT_ORDER
+          .filter(name => counts[name])
+          .map(name => {
+            const color = PRODUCT_COLORS[name];
+            const active = !hiddenProducts.has(name);
+            return `<div class="legend-item${active ? '' : ' dimmed'}" data-type="${name}">
+              <span class="legend-circle" style="background:${active ? color : 'transparent'};border:1.5px solid ${color}"></span>
+              <span class="legend-name">${name}</span>
+              <span class="legend-cnt">${counts[name] || 0}</span>
+            </div>`;
+          }).join('');
+
+        for (const item of el.querySelectorAll('.legend-item')) {
+          item.addEventListener('click', async () => {
+            const type = item.dataset.type;
+            if (hiddenProducts.has(type)) hiddenProducts.delete(type);
+            else hiddenProducts.add(type);
+            const s = await loadShipments();
+            const traces = shipmentsToGeoJSON(s);
+            const traceLines = { type: 'FeatureCollection', features: traces.features.filter(f => f.geometry.type === 'LineString') };
+            map.getSource('ship-tracks').setData(traceLines);
+            map.getSource('ship-ports').setData(shipmentPorts(s));
+            updateShipmentLegend(s);
+          });
+        }
+      }
+
+      for (const btn of document.querySelectorAll('.mode-btn')) {
+        btn.addEventListener('click', () => switchMode(btn.dataset.mode));
+      }
+
       buildLegend();
       const showDate = setupDateSlider(dates, meta, flightCounts);
 
+      // If hash specifies a date, jump the slider to it
       const hashDate = getHashParam('date');
       if (hashDate && dates.includes(hashDate)) {
         document.getElementById('slider').value = dates.indexOf(hashDate);
       }
 
       await showDate();
+
+      // Shipment tooltip
+      function showShipmentTooltip(e, props) {
+        const mass = props.mass ? `${Math.round(props.mass).toLocaleString()} t` : '';
+        tooltip.innerHTML = `
+          <div class="tt-hex">${props.vessel}</div>
+          <div class="tt-label">Product</div>
+          <div class="tt-value">${props.product}</div>
+          ${props.origin ? `<div class="tt-label">Origin</div><div class="tt-value">${props.origin}${props.originCountry ? ', ' + props.originCountry : ''}</div>` : ''}
+          ${props.dest ? `<div class="tt-label">Destination</div><div class="tt-value">${props.dest}${props.destCountry ? ', ' + props.destCountry : ''}</div>` : ''}
+          ${mass ? `<div class="tt-label">Mass</div><div class="tt-value">${mass}</div>` : ''}
+          ${props.buyer ? `<div class="tt-label">Buyer</div><div class="tt-value">${props.buyer}</div>` : ''}
+          <div class="tt-label">Period</div>
+          <div class="tt-value">${props.start || '?'} → ${props.end || '?'}</div>
+          <div class="tt-label">Status</div>
+          <div class="tt-value">${props.status || '?'}</div>
+        `;
+        tooltip.style.display = 'block';
+        tooltip.style.left = e.point.x + 16 + 'px';
+        tooltip.style.top = e.point.y + 'px';
+      }
+
+      for (const layer of ['ship-tracks-hit', 'ship-ports']) {
+        map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', layer, () => {
+          map.getCanvas().style.cursor = '';
+          hideTooltip();
+          map.setPaintProperty('ship-tracks-line', 'line-opacity', 0.6);
+          map.setPaintProperty('ship-tracks-line', 'line-width', 1.2);
+        });
+        map.on('mousemove', layer, (e) => {
+          const props = e.features[0].properties;
+          if (layer === 'ship-ports') {
+            tooltip.innerHTML = `
+              <div class="tt-hex">${props.portName}</div>
+              <div class="tt-label">${props.portType === 'origin' ? 'Origin' : 'Destination'}</div>
+              <div class="tt-value">${props.country || ''}</div>
+            `;
+            tooltip.style.display = 'block';
+            tooltip.style.left = e.point.x + 16 + 'px';
+            tooltip.style.top = e.point.y + 'px';
+          } else {
+            showShipmentTooltip(e, props);
+            map.setPaintProperty('ship-tracks-line', 'line-opacity', [
+              'case', ['==', ['get', 'id'], props.id], 1, 0.15,
+            ]);
+            map.setPaintProperty('ship-tracks-line', 'line-width', [
+              'case', ['==', ['get', 'id'], props.id], 2.5, 0.8,
+            ]);
+          }
+        });
+      }
 
       // Base hover
       map.on('mouseenter', 'bases', () => { map.getCanvas().style.cursor = 'pointer'; });
