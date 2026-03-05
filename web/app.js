@@ -212,6 +212,23 @@ function lastPositions(flights, meta) {
 }
 
 
+// ── Hash helpers (date param alongside MapLibre's built-in map hash) ─
+
+function getHashParam(key) {
+  const m = location.hash.match(new RegExp(`(?:^#|&)${key}=([^&]*)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function setHashParam(key, value) {
+  const hash = location.hash.slice(1);
+  const re = new RegExp(`((?:^|&)${key}=)[^&]*`);
+  if (re.test(hash)) {
+    location.hash = hash.replace(re, `$1${encodeURIComponent(value)}`);
+  } else {
+    location.hash = hash + (hash ? '&' : '') + `${key}=${encodeURIComponent(value)}`;
+  }
+}
+
 // ── Map setup ───────────────────────────────────────────────────────
 
 const mapStyle = {
@@ -330,6 +347,7 @@ map = new maplibregl.Map({
   center: [-2.5, 54.5],
   zoom: 4,
   minZoom: 2,
+  hash: 'map',
   attributionControl: false,
 });
 
@@ -496,6 +514,7 @@ function setupDateSlider(dates, meta, flightCounts) {
     currentDate = date;
     updateLegendCounts();
     updateMapData();
+    setHashParam('date', date);
 
     loading = false;
   }
@@ -635,6 +654,12 @@ function initApp() {
 
       buildLegend();
       const showDate = setupDateSlider(dates, meta, flightCounts);
+
+      const hashDate = getHashParam('date');
+      if (hashDate && dates.includes(hashDate)) {
+        document.getElementById('slider').value = dates.indexOf(hashDate);
+      }
+
       await showDate();
 
       // Base hover
