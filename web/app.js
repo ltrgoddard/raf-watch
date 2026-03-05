@@ -137,41 +137,29 @@ function traceToGeoJSON(flights, meta) {
       typeGroup: classifyType(m.icao_type || flight.t || ''),
     };
 
+    const baseTime = flight.timestamp || 0;
+
+    function emitSegment(seg, gap) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: seg.map(p => [p.lon, p.lat]) },
+        properties: { ...baseProps, gap, times: JSON.stringify(seg.map(p => baseTime + p.time)) },
+      });
+    }
+
     // Split into solid and gap segments based on time between points
     let segment = [points[0]];
     for (let i = 1; i < points.length; i++) {
       const dt = points[i].time - points[i - 1].time;
       if (dt > GAP_THRESHOLD) {
-        // Emit the solid segment so far
-        if (segment.length >= 2) {
-          features.push({
-            type: 'Feature',
-            geometry: { type: 'LineString', coordinates: segment.map(p => [p.lon, p.lat]) },
-            properties: { ...baseProps, gap: false },
-          });
-        }
-        // Emit a gap segment connecting the two points
-        features.push({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: [
-            [segment[segment.length - 1].lon, segment[segment.length - 1].lat],
-            [points[i].lon, points[i].lat],
-          ]},
-          properties: { ...baseProps, gap: true },
-        });
+        if (segment.length >= 2) emitSegment(segment, false);
+        emitSegment([segment[segment.length - 1], points[i]], true);
         segment = [points[i]];
       } else {
         segment.push(points[i]);
       }
     }
-    // Emit final solid segment
-    if (segment.length >= 2) {
-      features.push({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: segment.map(p => [p.lon, p.lat]) },
-        properties: { ...baseProps, gap: false },
-      });
-    }
+    if (segment.length >= 2) emitSegment(segment, false);
   }
 
   return { type: 'FeatureCollection', features };
@@ -358,14 +346,32 @@ initApp();
 
 const tooltip = document.getElementById('tooltip');
 
-function showTooltip(e, props) {
+function nearestTime(e, feature) {
+  const times = feature.properties.times;
+  if (!times) return '';
+  const coords = feature.geometry.coordinates;
+  const parsed = JSON.parse(times);
+  if (!coords || !parsed.length) return '';
+  const lngLat = e.lngLat;
+  let best = 0, bestDist = Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const dx = coords[i][0] - lngLat.lng;
+    const dy = coords[i][1] - lngLat.lat;
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return new Date(parsed[best] * 1000).toISOString().slice(11, 19) + ' UTC';
+}
+
+function showTooltip(e, props, feature) {
+  const time = feature ? nearestTime(e, feature) : '';
   tooltip.innerHTML = `
     <div class="tt-hex">${props.hex}</div>
     <div class="tt-label">Aircraft</div>
     <div class="tt-value">${props.type || props.icao_type || 'Unknown'}</div>
     ${props.reg ? `<div class="tt-label">Registration</div><div class="tt-value">${props.reg}</div>` : ''}
     ${props.unit ? `<div class="tt-label">Unit</div><div class="tt-value">${props.unit}</div>` : ''}
-    ${props.date ? `<div class="tt-label">Date</div><div class="tt-value">${props.date}</div>` : ''}
+    ${props.date ? `<div class="tt-label">Date</div><div class="tt-value">${props.date}${time ? ' · ' + time : ''}</div>` : ''}
     ${props.maxAlt != null ? `<div class="tt-label">Max altitude</div><div class="tt-value">${props.maxAlt.toLocaleString()} ft</div>` : ''}
     ${props.avgSpeed ? `<div class="tt-label">Avg speed</div><div class="tt-value">${props.avgSpeed} kts</div>` : ''}
     ${props.alt != null && props.speed != null ? `<div class="tt-label">Last position</div><div class="tt-value">${props.alt.toLocaleString()} ft · ${props.speed} kts</div>` : ''}
@@ -986,8 +992,9 @@ function initApp() {
           map.setPaintProperty('tracks-gap', 'line-opacity', 0.35);
         });
         map.on('mousemove', layer, (e) => {
-          const props = e.features[0].properties;
-          showTooltip(e, props);
+          const feature = e.features[0];
+          const props = feature.properties;
+          showTooltip(e, props, feature);
           map.setPaintProperty('tracks-line', 'line-opacity', [
             'case', ['==', ['get', 'hex'], props.hex], 1, 0.25,
           ]);
