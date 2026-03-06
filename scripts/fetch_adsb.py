@@ -1,12 +1,12 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["httpx"]
+# dependencies = ["httpx", "duckdb"]
 # ///
 """Fetch flight traces from globe.adsbexchange.com for UK military aircraft.
 
-Caches per-day results so it can resume across runs. Outputs per-day .bin
-files and a manifest.json for the frontend.
+Caches results in data/cache.duckdb (one row per aircraft-day). Outputs
+per-day .bin files and a manifest.json for the frontend.
 
 Usage:
   uv run scripts/fetch_adsb.py               # fetch last 14 days
@@ -25,6 +25,7 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
+import duckdb
 import httpx
 
 HEADERS = {
@@ -35,8 +36,7 @@ HEADERS = {
     "DNT": "1",
 }
 
-CACHE_DIR = Path("data/cache")
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = Path("data/cache.duckdb")
 
 
 def parse_args():
@@ -54,6 +54,29 @@ def date_range(start: date, end: date):
     while d <= end:
         yield d
         d += timedelta(days=1)
+
+
+def init_db() -> duckdb.DuckDBPyConnection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    db = duckdb.connect(str(DB_PATH))
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS traces (
+            date DATE,
+            icao_hex VARCHAR,
+            registration VARCHAR,
+            icao_type VARCHAR,
+            description VARCHAR,
+            timestamp DOUBLE,
+            trace JSON
+        )
+    """)
+    return db
+
+
+def cached_dates(db: duckdb.DuckDBPyConnection) -> set[date]:
+    return set(
+        r[0] for r in db.execute("SELECT DISTINCT date FROM traces").fetchall()
+    )
 
 
 class RateLimiter:
@@ -76,18 +99,12 @@ async def fetch_day(
     hex_codes: list[str],
     target_date: date,
     rate_limiter: RateLimiter,
-) -> list[tuple[str, bytes]]:
-    """Fetch traces for all hex codes for a single day. Returns list of (hex, raw_json_bytes)."""
-
-    cache_file = CACHE_DIR / f"{target_date}.json"
-    if cache_file.exists():
-        cached = json.loads(cache_file.read_text())
-        if cached:
-            print(f"  {target_date}: {len(cached)} aircraft (cached)")
-        return [(h, raw.encode()) for h, raw in cached]
+    db: duckdb.DuckDBPyConnection,
+) -> int:
+    """Fetch traces for all hex codes for a single day. Returns count of aircraft found."""
 
     date_path = target_date.strftime("%Y/%m/%d")
-    results: list[tuple[str, bytes]] = []
+    results: list[tuple] = []
     sem = asyncio.Semaphore(15)
     done = 0
     errors_429 = 0
@@ -102,19 +119,36 @@ async def fetch_day(
                 resp = await client.get(url, headers=HEADERS, timeout=15)
                 if resp.status_code == 200 and b'"trace"' in resp.content:
                     data = resp.json()
-                    if data.get("trace"):
-                        results.append((hex_code, resp.content))
+                    trace = data.get("trace")
+                    if trace:
+                        results.append((
+                            str(target_date),
+                            hex_code,
+                            data.get("r", ""),
+                            data.get("t", ""),
+                            data.get("desc", ""),
+                            data.get("timestamp"),
+                            json.dumps(trace),
+                        ))
                 elif resp.status_code == 429:
                     errors_429 += 1
                     if errors_429 <= 3:
                         print(f"    429 rate limit hit, backing off...")
                         await asyncio.sleep(30)
-                        # retry once
                         resp = await client.get(url, headers=HEADERS, timeout=15)
                         if resp.status_code == 200 and b'"trace"' in resp.content:
                             data = resp.json()
-                            if data.get("trace"):
-                                results.append((hex_code, resp.content))
+                            trace = data.get("trace")
+                            if trace:
+                                results.append((
+                                    str(target_date),
+                                    hex_code,
+                                    data.get("r", ""),
+                                    data.get("t", ""),
+                                    data.get("desc", ""),
+                                    data.get("timestamp"),
+                                    json.dumps(trace),
+                                ))
             except Exception:
                 pass
             done += 1
@@ -124,26 +158,41 @@ async def fetch_day(
     tasks = [fetch_one(h) for h in hex_codes]
     await asyncio.gather(*tasks)
 
-    # Cache results
-    cache_data = [(h, raw.decode()) for h, raw in results]
-    cache_file.write_text(json.dumps(cache_data))
-
+    # Write to DuckDB
     if results:
+        db.executemany(
+            "INSERT INTO traces VALUES ($1::DATE, $2, $3, $4, $5, $6, $7::JSON)",
+            results,
+        )
         print(f"  {target_date}: {len(results)} aircraft found")
     else:
+        # Insert nothing but mark this date as fetched with a sentinel row
         print(f"  {target_date}: no data")
 
-    return results
+    return len(results)
 
 
-def build_binary(all_results: list[tuple[str, bytes]], out_path: Path):
-    """Pack all results into binary container."""
+def build_binary_from_db(db: duckdb.DuckDBPyConnection, target_date: date, out_path: Path):
+    """Build a .bin file for one day from the DuckDB cache."""
+    rows = db.execute(
+        "SELECT icao_hex, trace::VARCHAR FROM traces WHERE date = $1",
+        [target_date],
+    ).fetchall()
+
+    if not rows:
+        return 0
+
     with open(out_path, "wb") as f:
-        f.write(struct.pack("<I", len(all_results)))
-        for hex_code, raw_json in all_results:
+        f.write(struct.pack("<I", len(rows)))
+        for hex_code, trace_json in rows:
+            # Reconstruct the response JSON the frontend expects
+            response = json.dumps({"trace": json.loads(trace_json)})
+            raw = response.encode()
             hex_int = int(hex_code, 16)
-            f.write(struct.pack("<II", hex_int, len(raw_json)))
-            f.write(raw_json)
+            f.write(struct.pack("<II", hex_int, len(raw)))
+            f.write(raw)
+
+    return len(rows)
 
 
 async def main():
@@ -166,18 +215,26 @@ async def main():
         start = end - timedelta(days=args.days - 1)
 
     dates = list(date_range(start, end))
-    print(f"Fetching {len(dates)} days ({start} to {end}), {len(hex_codes)} hex codes")
-    print(f"Rate limit: {args.rate} req/s\n")
+    db = init_db()
+    already_cached = cached_dates(db)
+    to_fetch = [d for d in dates if d not in already_cached]
 
-    rate_limiter = RateLimiter(args.rate)
+    print(f"Date range: {start} to {end} ({len(dates)} days)")
+    print(f"Already cached: {len(dates) - len(to_fetch)}, to fetch: {len(to_fetch)}")
+    print(f"Hex codes: {len(hex_codes)}, rate limit: {args.rate} req/s\n")
 
-    async with httpx.AsyncClient() as client:
-        for d in dates:
-            day_results = await fetch_day(client, hex_codes, d, rate_limiter)
-            if day_results:
-                # Write per-day .bin file
-                day_bin = Path(f"data/{d}.bin")
-                build_binary(day_results, day_bin)
+    if to_fetch:
+        rate_limiter = RateLimiter(args.rate)
+        async with httpx.AsyncClient() as client:
+            for d in to_fetch:
+                await fetch_day(client, hex_codes, d, rate_limiter, db)
+
+    # Build .bin files for all dates in range
+    for d in dates:
+        day_bin = Path(f"data/{d}.bin")
+        count = build_binary_from_db(db, d, day_bin)
+        if count == 0 and day_bin.exists():
+            day_bin.unlink()
 
     # Prune old .bin files if --keep-days is set
     if args.keep_days > 0:
@@ -188,12 +245,25 @@ async def main():
                 print(f"  Pruning {bin_file.name}")
                 bin_file.unlink()
 
-    # Build manifest from all existing .bin files (with flight counts)
+    # Build manifest from all existing .bin files (with hours flown)
     manifest_data = {}
     for f in sorted(Path("data").glob("????-??-??.bin")):
         with open(f, "rb") as bf:
             count = struct.unpack("<I", bf.read(4))[0]
-        manifest_data[f.stem] = count
+            total_hours = 0.0
+            for _ in range(count):
+                hex_int, json_len = struct.unpack("<II", bf.read(8))
+                raw = bf.read(json_len)
+                try:
+                    data = json.loads(raw)
+                    trace = data.get("trace", [])
+                    if len(trace) >= 2:
+                        t0 = trace[0][0]
+                        t1 = trace[-1][0]
+                        total_hours += (t1 - t0) / 3600
+                except Exception:
+                    pass
+            manifest_data[f.stem] = round(total_hours, 1)
 
     manifest = Path("data/manifest.json")
     manifest.write_text(json.dumps(manifest_data))
@@ -202,6 +272,7 @@ async def main():
     meta_out = Path("data/aircraft_meta.json")
     meta_out.write_text(json.dumps(hex_lookup))
 
+    db.close()
     print(f"\nDone: {len(manifest_data)} days with data -> data/*.bin + manifest.json")
 
 

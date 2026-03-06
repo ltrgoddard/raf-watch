@@ -41,7 +41,7 @@ jobs:
       - name: Package and upload data
         run: |
           cd data
-          zip -r ../data.zip . -x 'cache/*' 'flights.bin'
+          zip -r ../data.zip . -x 'cache/*' 'cache.duckdb' 'export/*' 'flights.bin'
           cd ..
           gh release upload latest-data data.zip --clobber
           rm data.zip
