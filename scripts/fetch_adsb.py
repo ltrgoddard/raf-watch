@@ -45,7 +45,6 @@ def parse_args():
     p.add_argument("--from", dest="from_date", type=str, default=None)
     p.add_argument("--to", dest="to_date", type=str, default=None)
     p.add_argument("--rate", type=float, default=10.0, help="max requests/sec")
-    p.add_argument("--keep-days", type=int, default=0, help="prune .bin files older than N days (0=no pruning)")
     return p.parse_args()
 
 
@@ -70,12 +69,17 @@ def init_db() -> duckdb.DuckDBPyConnection:
             trace JSON
         )
     """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS fetched_dates (
+            date DATE PRIMARY KEY
+        )
+    """)
     return db
 
 
 def cached_dates(db: duckdb.DuckDBPyConnection) -> set[date]:
     return set(
-        r[0] for r in db.execute("SELECT DISTINCT date FROM traces").fetchall()
+        r[0] for r in db.execute("SELECT DISTINCT date FROM fetched_dates").fetchall()
     )
 
 
@@ -166,8 +170,13 @@ async def fetch_day(
         )
         print(f"  {target_date}: {len(results)} aircraft found")
     else:
-        # Insert nothing but mark this date as fetched with a sentinel row
         print(f"  {target_date}: no data")
+
+    # Mark date as fetched so we don't re-fetch it
+    db.execute(
+        "INSERT OR IGNORE INTO fetched_dates VALUES ($1::DATE)",
+        [str(target_date)],
+    )
 
     return len(results)
 
@@ -216,6 +225,14 @@ async def main():
 
     dates = list(date_range(start, end))
     db = init_db()
+
+    # Backfill fetched_dates from existing traces data (one-time migration)
+    db.execute("""
+        INSERT OR IGNORE INTO fetched_dates
+        SELECT DISTINCT date FROM traces
+        WHERE date NOT IN (SELECT date FROM fetched_dates)
+    """)
+
     already_cached = cached_dates(db)
     to_fetch = [d for d in dates if d not in already_cached]
 
@@ -229,21 +246,23 @@ async def main():
             for d in to_fetch:
                 await fetch_day(client, hex_codes, d, rate_limiter, db)
 
-    # Build .bin files for all dates in range
-    for d in dates:
+    # Build .bin files for the last 14 days only (for the web frontend)
+    bin_end = date.today() - timedelta(days=1)
+    bin_start = bin_end - timedelta(days=13)
+    bin_dates = list(date_range(bin_start, bin_end))
+
+    for d in bin_dates:
         day_bin = Path(f"data/{d}.bin")
         count = build_binary_from_db(db, d, day_bin)
         if count == 0 and day_bin.exists():
             day_bin.unlink()
 
-    # Prune old .bin files if --keep-days is set
-    if args.keep_days > 0:
-        cutoff = date.today() - timedelta(days=args.keep_days)
-        for bin_file in sorted(Path("data").glob("????-??-??.bin")):
-            file_date = date.fromisoformat(bin_file.stem)
-            if file_date < cutoff:
-                print(f"  Pruning {bin_file.name}")
-                bin_file.unlink()
+    # Remove .bin files outside the 14-day window
+    for bin_file in sorted(Path("data").glob("????-??-??.bin")):
+        file_date = date.fromisoformat(bin_file.stem)
+        if file_date < bin_start:
+            print(f"  Pruning {bin_file.name}")
+            bin_file.unlink()
 
     # Build manifest from all existing .bin files (with hours flown)
     manifest_data = {}
