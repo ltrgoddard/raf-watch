@@ -252,8 +252,11 @@ async def main():
     bin_start = bin_end - timedelta(days=args.keep_days - 1)
     bin_dates = list(date_range(bin_start, bin_end))
 
+    fetched_set = set(to_fetch) if to_fetch else set()
     for d in bin_dates:
         day_bin = Path(f"data/{d}.bin")
+        if day_bin.exists() and d not in fetched_set:
+            continue  # keep existing .bin; DuckDB may not have this day cached
         count = build_binary_from_db(db, d, day_bin)
         if count == 0 and day_bin.exists():
             day_bin.unlink()
