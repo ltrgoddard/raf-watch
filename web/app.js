@@ -539,7 +539,7 @@ function setupDateSlider(dates, meta, flightCounts) {
   function updateLabel(date) {
     const idx = dates.indexOf(date);
     const count = flightCounts[idx];
-    const current = count !== undefined ? `${date} · ${count}h flown` : date;
+    const current = count !== undefined ? `${date} · ${Math.round(count)}h flown` : date;
     labels.innerHTML = `
       <span>${dates[0]}</span>
       <span class="current">${current}</span>
