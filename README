@@ -4,8 +4,9 @@ Interactive map of UK Royal Air Force activity using ADS-B data.
 
 Hex codes are scraped from live-mobile-mode-s.eu. Flight traces
 are fetched from globe.adsbexchange.com (tar1090 format) and
-stored as binary containers, parsed client-side. The frontend is
-static HTML/CSS/JS with MapLibre GL.
+stored in a DuckDB cache and exported as compact binary files
+(RAF1 format), parsed client-side. The frontend is static
+HTML/CSS/JS with MapLibre GL.
 
 Setup
 
@@ -15,24 +16,37 @@ Setup
   uv run scripts/fetch_bases.py            Fetch RAF base locations from OSM
   python -m http.server -d web             Serve and open localhost:8000
 
-The fetch script caches results in data/cache/ and is resumable.
-Each day's data is stored as a separate .bin file loaded on demand
-by the date slider. Flight counts per day are included in the
-manifest (data/manifest.json).
+The fetch script caches results in data/cache.duckdb and is
+resumable. Each day's data is exported as a separate .bin file
+loaded on demand by the date slider. Hours flown per day are
+included in the manifest (data/manifest.json).
 
-Binary format (per-day .bin files)
+Binary format — RAF1 (per-day .bin files)
 
-  [uint32 LE]  entry count
-  per entry:
-    [uint32 LE]  ICAO hex code as integer
-    [uint32 LE]  byte length of JSON payload
-    [N bytes]    raw JSON response from adsbexchange
+  File header:
+    [4 bytes]    magic "RAF1"
+    [uint32 LE]  day epoch (UTC midnight as unix timestamp)
+    [uint16 LE]  flight count
+
+  Per flight:
+    [uint24 LE]  ICAO hex code
+    [uvarint]    trace point count
+
+    Per trace point (delta-encoded from previous, initial = 0):
+      [uvarint]   dt (seconds)
+      [svarint]   dlat (units of 1e-5 degrees)
+      [svarint]   dlon (units of 1e-5 degrees)
+      [svarint]   dalt (units of 25 ft; -1 = ground)
+      [svarint]   dspeed (knots)
+      [uint8]     track (degrees * 256/360)
+
+  Varints use LEB128 (unsigned) and ZigZag + LEB128 (signed).
 
 Manifest format (data/manifest.json)
 
-  {"2026-02-18": 138, "2026-02-19": 121, ...}
+  {"2026-02-21": 129.3, "2026-02-22": 75.1, ...}
 
-  Keys are dates with .bin files, values are flight counts.
+  Keys are dates with .bin files, values are hours flown.
 
 Data sources
 
