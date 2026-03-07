@@ -1,8 +1,4 @@
-// Trace array field indices (tar1090 / adsbexchange format)
-const T = {
-  TIME: 0, LAT: 1, LON: 2, ALT: 3, SPEED: 4,
-  TRACK: 5, FLAG: 6, VERT_RATE: 7, EXT: 8, SIG_TYPE: 9,
-};
+const T = { TIME: 0, LAT: 1, LON: 2, ALT: 3, SPEED: 4, TRACK: 5 };
 
 // Color palette for aircraft type groups
 const TYPE_COLORS = {
@@ -39,24 +35,69 @@ function typeColor(icaoType) {
 }
 
 
-// ── Parse binary container ──────────────────────────────────────────
+// ── RAF1 binary decoder ─────────────────────────────────────────────
 
-function parseBin(buf) {
+function parseRAF1(buf) {
+  const bytes = new Uint8Array(buf);
   const view = new DataView(buf);
-  const count = view.getUint32(0, true);
-  let offset = 4;
+
+  // Header
+  const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+  if (magic !== 'RAF1') throw new Error('Not a RAF1 file');
+  const dayEpoch = view.getUint32(4, true);
+  const flightCount = view.getUint16(8, true);
+  let pos = 10;
+
+  function readUvarint() {
+    let value = 0, shift = 0;
+    while (true) {
+      const b = bytes[pos++];
+      value |= (b & 0x7F) << shift;
+      if (!(b & 0x80)) return value;
+      shift += 7;
+    }
+  }
+
+  function readSvarint() {
+    const n = readUvarint();
+    return (n >>> 1) ^ -(n & 1);
+  }
+
   const flights = [];
 
-  for (let i = 0; i < count; i++) {
-    const hexInt = view.getUint32(offset, true);
-    const len = view.getUint32(offset + 4, true);
-    offset += 8;
-    const bytes = new Uint8Array(buf, offset, len);
-    const text = new TextDecoder().decode(bytes);
-    const data = JSON.parse(text);
-    data._hexStr = hexInt.toString(16).padStart(6, '0');
-    flights.push(data);
-    offset += len;
+  for (let i = 0; i < flightCount; i++) {
+    // uint24 LE
+    const hex = bytes[pos] | (bytes[pos + 1] << 8) | (bytes[pos + 2] << 16);
+    pos += 3;
+    const pointCount = readUvarint();
+    const hexStr = hex.toString(16).padStart(6, '0');
+
+    const trace = [];
+    let time = 0, lat = 0, lon = 0, alt = 0, speed = 0;
+
+    for (let j = 0; j < pointCount; j++) {
+      time += readUvarint();
+      lat += readSvarint();
+      lon += readSvarint();
+      alt += readSvarint();
+      speed += readSvarint();
+      const track = bytes[pos++];
+
+      trace.push([
+        time,              // T=0: seconds-of-day
+        lat / 1e5,         // T=1: latitude
+        lon / 1e5,         // T=2: longitude
+        alt * 25,          // T=3: altitude in feet (-25 = ground)
+        speed,             // T=4: speed in knots
+        track * 360 / 256, // T=5: heading in degrees
+      ]);
+    }
+
+    flights.push({
+      _hexStr: hexStr,
+      timestamp: dayEpoch,
+      trace,
+    });
   }
 
   return flights;
@@ -80,7 +121,7 @@ async function loadDay(date) {
   const resp = await fetch(`data/${date}.bin`);
   if (!resp.ok) return [];
 
-  const flights = parseBin(await resp.arrayBuffer());
+  const flights = parseRAF1(await resp.arrayBuffer());
   dayCache.set(date, flights);
   return flights;
 }
@@ -98,7 +139,7 @@ function traceToGeoJSON(flights, meta) {
     const trace = flight.trace;
     if (!trace || trace.length < 2) continue;
 
-    const hex = flight._hexStr || flight.icao;
+    const hex = flight._hexStr;
     const m = meta[hex] || {};
     let maxAlt = 0;
     let totalSpeed = 0;
@@ -125,16 +166,16 @@ function traceToGeoJSON(flights, meta) {
 
     const baseProps = {
       hex,
-      reg: m.reg || flight.r || '',
-      type: m.type || flight.desc || '',
-      icao_type: m.icao_type || flight.t || '',
+      reg: m.reg || '',
+      type: m.type || '',
+      icao_type: m.icao_type || '',
       unit: m.unit || '',
       date: flightDate,
       maxAlt,
       avgSpeed: pointCount ? Math.round(totalSpeed / pointCount) : 0,
       points: pointCount,
-      color: typeColor(m.icao_type || flight.t || ''),
-      typeGroup: classifyType(m.icao_type || flight.t || ''),
+      color: typeColor(m.icao_type || ''),
+      typeGroup: classifyType(m.icao_type || ''),
     };
 
     const baseTime = flight.timestamp || 0;
@@ -171,7 +212,7 @@ function lastPositions(flights, meta) {
     const trace = flight.trace;
     if (!trace || trace.length === 0) continue;
 
-    const hex = flight._hexStr || flight.icao;
+    const hex = flight._hexStr;
     const m = meta[hex] || {};
 
     for (let i = trace.length - 1; i >= 0; i--) {
@@ -182,14 +223,14 @@ function lastPositions(flights, meta) {
           geometry: { type: 'Point', coordinates: [pt[T.LON], pt[T.LAT]] },
           properties: {
             hex,
-            reg: m.reg || flight.r || '',
-            type: m.type || flight.desc || '',
-            icao_type: m.icao_type || flight.t || '',
+            reg: m.reg || '',
+            type: m.type || '',
+            icao_type: m.icao_type || '',
             unit: m.unit || '',
             alt: pt[T.ALT] || 0,
             speed: pt[T.SPEED] || 0,
             track: pt[T.TRACK] || 0,
-            color: typeColor(m.icao_type || flight.t || ''),
+            color: typeColor(m.icao_type || ''),
           },
         });
         break;
@@ -395,9 +436,9 @@ let currentDate = '';
 
 function updateMapData() {
   const filtered = currentFlights.filter(f => {
-    const hex = f._hexStr || f.icao;
+    const hex = f._hexStr;
     const m = currentMeta[hex] || {};
-    const group = classifyType(m.icao_type || f.t || '');
+    const group = classifyType(m.icao_type || '');
     return !hiddenTypes.has(group);
   });
   const tracks = traceToGeoJSON(filtered, currentMeta);
@@ -415,9 +456,9 @@ function updateLegendCounts() {
   const el = document.getElementById('legend-items');
   const counts = {};
   for (const f of currentFlights) {
-    const hex = f._hexStr || f.icao;
+    const hex = f._hexStr;
     const m = currentMeta[hex] || {};
-    const group = classifyType(m.icao_type || f.t || '');
+    const group = classifyType(m.icao_type || '');
     counts[group] = (counts[group] || 0) + 1;
   }
 
