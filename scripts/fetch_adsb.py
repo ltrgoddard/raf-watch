@@ -22,7 +22,7 @@ import asyncio
 import json
 import struct
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import duckdb
@@ -182,8 +182,23 @@ async def fetch_day(
     return len(results)
 
 
+def encode_uvarint(value: int) -> bytes:
+    """Encode unsigned integer as LEB128 varint."""
+    buf = bytearray()
+    while value > 0x7F:
+        buf.append((value & 0x7F) | 0x80)
+        value >>= 7
+    buf.append(value & 0x7F)
+    return bytes(buf)
+
+
+def encode_svarint(value: int) -> bytes:
+    """Encode signed integer as ZigZag + LEB128."""
+    return encode_uvarint((value << 1) ^ (value >> 63))
+
+
 def build_binary_from_db(db: duckdb.DuckDBPyConnection, target_date: date, out_path: Path):
-    """Build a .bin file for one day from the DuckDB cache."""
+    """Build a RAF1 .bin file for one day from the DuckDB cache."""
     rows = db.execute(
         "SELECT icao_hex, trace::VARCHAR FROM traces WHERE date = $1",
         [target_date],
@@ -192,15 +207,56 @@ def build_binary_from_db(db: duckdb.DuckDBPyConnection, target_date: date, out_p
     if not rows:
         return 0
 
+    # Day epoch: UTC midnight as unix timestamp
+    day_epoch = int(datetime(target_date.year, target_date.month, target_date.day,
+                             tzinfo=timezone.utc).timestamp())
+
     with open(out_path, "wb") as f:
-        f.write(struct.pack("<I", len(rows)))
+        # File header: magic + day_epoch + flight_count
+        f.write(b"RAF1")
+        f.write(struct.pack("<IH", day_epoch, len(rows)))
+
         for hex_code, trace_json in rows:
-            # Reconstruct the response JSON the frontend expects
-            response = json.dumps({"trace": json.loads(trace_json)})
-            raw = response.encode()
+            trace = json.loads(trace_json)
+            if not trace:
+                continue
+
             hex_int = int(hex_code, 16)
-            f.write(struct.pack("<II", hex_int, len(raw)))
-            f.write(raw)
+            # uint24 LE
+            f.write(struct.pack("<I", hex_int)[:3])
+            f.write(encode_uvarint(len(trace)))
+
+            # Delta-encode trace points; initial state = 0
+            prev_time = 0
+            prev_lat = 0
+            prev_lon = 0
+            prev_alt = 0
+            prev_speed = 0
+
+            for pt in trace:
+                # Quantise
+                time_s = int(pt[0])  # whole seconds
+                lat_q = round(pt[1] * 1e5)
+                lon_q = round(pt[2] * 1e5)
+                alt_raw = pt[3]
+                alt_q = -1 if alt_raw == "ground" or alt_raw is None else int(alt_raw) // 25
+                speed_q = round(pt[4]) if pt[4] is not None else 0
+                track_raw = pt[5] if len(pt) > 5 and pt[5] is not None else 0
+                track_byte = round(track_raw * 256 / 360) & 0xFF
+
+                # Deltas
+                f.write(encode_uvarint(time_s - prev_time))
+                f.write(encode_svarint(lat_q - prev_lat))
+                f.write(encode_svarint(lon_q - prev_lon))
+                f.write(encode_svarint(alt_q - prev_alt))
+                f.write(encode_svarint(speed_q - prev_speed))
+                f.write(bytes([track_byte]))
+
+                prev_time = time_s
+                prev_lat = lat_q
+                prev_lon = lon_q
+                prev_alt = alt_q
+                prev_speed = speed_q
 
     return len(rows)
 
@@ -272,20 +328,51 @@ async def main():
     manifest_data = {}
     for f in sorted(Path("data").glob("????-??-??.bin")):
         with open(f, "rb") as bf:
-            count = struct.unpack("<I", bf.read(4))[0]
+            magic = bf.read(4)
+            if magic != b"RAF1":
+                continue
+            _day_epoch, flight_count = struct.unpack("<IH", bf.read(6))
             total_hours = 0.0
-            for _ in range(count):
-                hex_int, json_len = struct.unpack("<II", bf.read(8))
-                raw = bf.read(json_len)
-                try:
-                    data = json.loads(raw)
-                    trace = data.get("trace", [])
-                    if len(trace) >= 2:
-                        t0 = trace[0][0]
-                        t1 = trace[-1][0]
-                        total_hours += (t1 - t0) / 3600
-                except Exception:
-                    pass
+
+            for _ in range(flight_count):
+                # Skip uint24 hex
+                bf.read(3)
+                # Read point count (uvarint)
+                point_count = 0
+                shift = 0
+                while True:
+                    b = bf.read(1)[0]
+                    point_count |= (b & 0x7F) << shift
+                    if not (b & 0x80):
+                        break
+                    shift += 7
+
+                # Decode trace to get first and last time
+                time_acc = 0
+                first_time = None
+                for j in range(point_count):
+                    # Read uvarint dt
+                    dt = 0
+                    shift = 0
+                    while True:
+                        b = bf.read(1)[0]
+                        dt |= (b & 0x7F) << shift
+                        if not (b & 0x80):
+                            break
+                        shift += 7
+                    time_acc += dt
+                    if first_time is None:
+                        first_time = time_acc
+
+                    # Skip dlat, dlon, dalt, dspeed (all svarints) + track (1 byte)
+                    for _ in range(4):  # 4 svarints
+                        while bf.read(1)[0] & 0x80:
+                            pass
+                    bf.read(1)  # track byte
+
+                if first_time is not None and point_count >= 2:
+                    total_hours += (time_acc - first_time) / 3600
+
             manifest_data[f.stem] = round(total_hours, 1)
 
     manifest = Path("data/manifest.json")
