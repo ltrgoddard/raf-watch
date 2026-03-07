@@ -44,6 +44,7 @@ def parse_args():
     p.add_argument("--days", type=int, default=14)
     p.add_argument("--from", dest="from_date", type=str, default=None)
     p.add_argument("--to", dest="to_date", type=str, default=None)
+    p.add_argument("--keep-days", type=int, default=14, help="days of .bin files to keep")
     p.add_argument("--rate", type=float, default=10.0, help="max requests/sec")
     return p.parse_args()
 
@@ -246,9 +247,9 @@ async def main():
             for d in to_fetch:
                 await fetch_day(client, hex_codes, d, rate_limiter, db)
 
-    # Build .bin files for the last 14 days only (for the web frontend)
+    # Build .bin files for the keep window (for the web frontend)
     bin_end = date.today() - timedelta(days=1)
-    bin_start = bin_end - timedelta(days=13)
+    bin_start = bin_end - timedelta(days=args.keep_days - 1)
     bin_dates = list(date_range(bin_start, bin_end))
 
     for d in bin_dates:
