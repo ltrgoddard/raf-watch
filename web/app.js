@@ -388,10 +388,15 @@ initApp();
 const tooltip = document.getElementById('tooltip');
 
 function nearestTime(e, feature) {
-  const times = feature.properties.times;
+  // MapLibre simplifies geometry in rendered tiles, so the coordinates from
+  // e.features[0] have far fewer points than the original. Look up the
+  // original unsimplified feature from our stored GeoJSON instead.
+  const original = findOriginalFeature(feature);
+  const src = original || feature;
+  const times = src.properties.times;
   if (!times) return '';
-  const coords = feature.geometry.coordinates;
-  const parsed = JSON.parse(times);
+  const coords = src.geometry.coordinates;
+  const parsed = typeof times === 'string' ? JSON.parse(times) : times;
   if (!coords || !parsed.length) return '';
   const lngLat = e.lngLat;
   let best = 0, bestDist = Infinity;
@@ -402,6 +407,27 @@ function nearestTime(e, feature) {
     if (d < bestDist) { bestDist = d; best = i; }
   }
   return new Date(parsed[best] * 1000).toISOString().slice(11, 19) + ' UTC';
+}
+
+function findOriginalFeature(tileFeature) {
+  if (!currentTracks) return null;
+  const hex = tileFeature.properties.hex;
+  const tileCoords = tileFeature.geometry.coordinates;
+  if (!tileCoords || tileCoords.length === 0) return null;
+  // Match by hex and by checking the first coordinate of the segment
+  const startLon = tileCoords[0][0];
+  const startLat = tileCoords[0][1];
+  for (const f of currentTracks.features) {
+    if (f.properties.hex !== hex) continue;
+    const c = f.geometry.coordinates;
+    // Check if this original feature contains the tile feature's start point
+    for (let i = 0; i < c.length; i++) {
+      if (Math.abs(c[i][0] - startLon) < 1e-6 && Math.abs(c[i][1] - startLat) < 1e-6) {
+        return f;
+      }
+    }
+  }
+  return null;
 }
 
 function showTooltip(e, props, feature) {
@@ -433,6 +459,7 @@ const hiddenTypes = new Set();
 let currentFlights = [];
 let currentMeta = {};
 let currentDate = '';
+let currentTracks = null;  // original GeoJSON (unsimplified) for tooltip lookups
 
 function updateMapData() {
   const filtered = currentFlights.filter(f => {
@@ -442,6 +469,7 @@ function updateMapData() {
     return !hiddenTypes.has(group);
   });
   const tracks = traceToGeoJSON(filtered, currentMeta);
+  currentTracks = tracks;
   const dots = lastPositions(filtered, currentMeta);
   map.getSource('tracks').setData(tracks);
   map.getSource('dots').setData(dots);
