@@ -1,0 +1,50 @@
+name: Update and deploy
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Download data
+        run: gh release download latest-data -p data.zip &&
+          unzip -q data.zip -d data && rm data.zip
+      - name: Refresh hex list (keeps the old list on failure)
+        run: uv run scripts/scrape_hex.py || true
+      - name: Fetch missing days
+        run: uv run scripts/fetch.py
+      - name: Upload data
+        run: cd data && zip -qr ../data.zip . &&
+          gh release upload latest-data ../data.zip --clobber
+      - run: rm -rf web/data && cp -r data web/data
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deploy
+        uses: actions/deploy-pages@v4
+      # scheduled workflows are disabled after 60 days without repo
+      # activity; re-enabling through the API resets that timer
+      - run: gh workflow enable pages.yml

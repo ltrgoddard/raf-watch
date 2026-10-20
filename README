@@ -2,26 +2,50 @@ RAF WATCH
 
 Interactive map of UK Royal Air Force activity using ADS-B data.
 
-Hex codes are scraped from live-mobile-mode-s.eu. Flight traces
-are fetched from globe.adsbexchange.com (tar1090 format) and
-stored in a DuckDB cache and exported as compact binary files
-(RAF1 format), parsed client-side. The frontend is static
-HTML/CSS/JS with MapLibre GL.
+Hex codes are scraped from live-mobile-mode-s.eu. Flight traces come
+from the public ClickHouse database behind adsb.exposed, which holds
+unsampled airplanes.live and adsb.lol (ODbL) data from February 2023.
+One SQL query per batch of up to 7 days (scripts/days.sql) selects
+the listed hex codes and the UK military block (43c000-43cfff),
+removes duplicate points and thins each trace. The source table is
+not partitioned by date, so every query scans it; batching keeps the
+load on the shared service low. scripts/fetch.py writes the result
+as a compact binary file per day (RAF1 format), which the browser
+parses. The frontend is static HTML/CSS and ES modules, with
+MapLibre GL and the Inter font vendored in web/vendor and a keyless
+OpenFreeMap basemap.
 
 Setup
 
-  uv run scripts/scrape_hex.py             Scrape hex codes
-  uv run scripts/fetch_adsb.py             Fetch last 14 days of traces
-  uv run scripts/fetch_adsb.py --days 7    Fetch last 7 days
+  uv run scripts/scrape_hex.py             Refresh hex codes
+  uv run scripts/fetch.py                  Fetch missing or empty recent days
+  uv run scripts/fetch.py 2025-01-01 2025-12-31
+                                           Fetch (or refetch) a range
   uv run scripts/fetch_bases.py            Fetch RAF base locations from OSM
-  python -m http.server -d web             Serve and open localhost:8000
+  python -m http.server -d web             Serve on localhost:8000
+                                           (web/data links to ../data)
 
-The fetch script caches results in data/cache.duckdb and is
-resumable. Each day's data is exported as a separate .bin file
-loaded on demand by the date slider. Hours flown per day are
-included in the manifest (data/manifest.json).
+Deployment
 
-Binary format — RAF1 (per-day .bin files)
+  .github/workflows/pages.yml runs daily at 06:00 UTC and on every
+  push. It downloads data.zip from the latest-data release, refreshes
+  the hex list, fetches missing days, uploads data.zip again and
+  deploys web/ to GitHub Pages. GitHub disables scheduled workflows
+  after 60 days without repository activity, so the last step
+  re-enables the workflow through the API to reset that timer.
+
+  All data can be rebuilt from the source with fetch.py and a date
+  range. A 7-day batch takes about 5 seconds.
+
+Thinning
+
+  Points are kept every 30 s in straight flight, every 5 s while the
+  track changes by more than 1 degree per point, every 60 s on the
+  ground, and at both ends of any gap longer than 60 s. Aircraft with
+  fewer than 60 positions in a day are dropped as noise. Hours flown
+  count airborne time between points less than 10 minutes apart.
+
+Binary format: RAF1 (per-day .bin files)
 
   File header:
     [4 bytes]    magic "RAF1"
@@ -42,14 +66,16 @@ Binary format — RAF1 (per-day .bin files)
 
   Varints use LEB128 (unsigned) and ZigZag + LEB128 (signed).
 
-Manifest format (data/manifest.json)
+Other files in data/
 
-  {"2026-02-21": 129.3, "2026-02-22": 75.1, ...}
-
-  Keys are dates with .bin files, values are hours flown.
+  manifest.json       {"2026-10-19": 312.4, ...} hours flown per day
+  aircraft_meta.json  {"43c5df": {"reg", "type", "icao_type", "unit",
+                      "heli"}, ...} for every aircraft seen
+  aircraft.json       the scraped hex list
 
 Data sources
 
   Hex codes    https://live-mobile-mode-s.eu/overviewall.php?DGCountry=UK
-  Traces       https://globe.adsbexchange.com/globe_history/
+  Traces       https://adsb.exposed (airplanes.live, adsb.lol under ODbL)
+  Basemap      https://openfreemap.org (OpenStreetMap)
   Bases        OpenStreetMap via Overpass API (military=airfield)
